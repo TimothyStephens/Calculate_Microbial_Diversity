@@ -1,0 +1,156 @@
+---
+title: "Alpha-Diversity"
+author: "Timothy Stephens"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    keep_md: yes
+---
+
+Alpha-diversity represents diversity within an ecosystem or a sample, in other words, what is there and how much is there in term of species. However, it is not easy to define a species and we can calculate alpha-diversity at different taxonomic levels.
+
+Several alpha-diversity indices can be calculated. Within the most commonly used:
+ - Richness represents the number of species observed in each sample.
+ - Chao1 estimates the total richness.
+ - Pielou’s evenness provides information about the equity in species abundance in each sample, in other words are some species dominating others or do all species have quite the same abundances.
+ - Shannon index provides information about both richness and evenness.
+
+Alpha-diversity is calculated on the raw data. It is important to not use filtered data because many richness estimates are modeled on singletons and doubletons in the occurrence table. So, you need to leave them in the dataset if you want a meaningful estimate.
+Moreover, we usually not using normalized data because we want to assess the diversity on the raw data and we are not comparing samples to each other but only assessing diversity within each sample.
+
+Based heavily on tutorial: https://scienceparkstudygroup.github.io/microbiome-lesson/04-alpha-diversity/index.html
+
+
+# Setup
+
+Setup R env. Load packages and set default image export formats, size and resolution.
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE,
+                      fig.height = 8, 
+                      fig.width = 12, 
+                      dev = c("png", "pdf"),
+                      dpi = 1000)
+library(vegan)
+library(phyloseq)
+library(tidyverse)
+library(patchwork)
+library(agricolae)
+library(FSA)
+library(rcompanion)
+library(ggplot2)
+library(patchwork)
+options(scipen = 999) #Prevent scientific notation
+```
+
+
+
+## 1. Definitions and important information
+
+```{r load_data}
+data_otu  <- read.table("data/data_loue_16S_nonnorm.txt", header = TRUE)
+data_grp  <- read.table("data/data_loue_16S_nonnorm_grp.txt", header=TRUE, stringsAsFactors = TRUE)
+data_taxo <- read.table("data/data_loue_16S_nonnorm_taxo.txt", header = TRUE)
+
+OTU = otu_table(as.matrix(data_otu), taxa_are_rows = FALSE)
+SAM = sample_data(data_grp, errorIfNULL = TRUE)
+TAX = tax_table(as.matrix(data_taxo))
+data_phylo <- phyloseq(OTU, TAX, SAM)
+```
+Alpha-diversity is calculated on the raw data, here `data_otu` or `data_phylo` if you are using phyloseq.
+
+
+
+## 2. Indices calculation
+
+```{r calculate_richness_stats}
+data_richness <- estimateR(data_otu)                                            # calculate richness and Chao1 using vegan package
+
+data_evenness <- diversity(data_otu) / log(specnumber(data_otu))                # calculate evenness index using vegan package
+
+data_shannon <- diversity(data_otu, index = "shannon")                          # calculate Shannon index using vegan package
+
+data_alphadiv <- cbind(data_grp, t(data_richness), data_shannon, data_evenness) # combine all indices in one data table
+
+rm(data_richness, data_evenness, data_shannon)                                  # remove the unnecessary data/vector
+
+# Put the data in tidy format
+data_alphadiv_tidy <- 
+  data_alphadiv %>%
+  mutate(sample_id = rownames(data_alphadiv)) %>%
+  gather(key   = alphadiv_index,
+         value = obs_values,
+         -sample_id, -site, -month, -site_month)
+
+head(data_alphadiv_tidy)
+```
+
+
+
+## 3. Visualization
+
+```{r plot_results}
+P1 <- ggplot(data_alphadiv, aes(x=site, y=S.obs)) +
+  geom_boxplot(fill=c("blue","red")) +
+  labs(title= 'Richness', x= ' ', y= '', tag = "A") +
+  geom_point()
+
+P2 <- ggplot(data_alphadiv, aes(x=site, y=S.chao1)) +
+  geom_boxplot(fill=c("blue","red")) +
+  labs(title= 'Chao1', x= ' ', y= '', tag = "B") +
+  geom_point()
+
+P3 <- ggplot(data_alphadiv, aes(x=site, y=data_evenness)) +
+  geom_boxplot(fill=c("blue","red")) +
+  labs(title= 'Eveness', x= ' ', y= '', tag = "C") +
+  geom_point()
+
+P4 <- ggplot(data_alphadiv, aes(x=site, y=data_shannon)) +
+  geom_boxplot(fill=c("blue","red")) +
+  labs(title= 'Shannon', x= ' ', y= '', tag = "D") +
+  geom_point()
+
+(P1 | P2) / (P3 | P4)
+```
+
+
+Plot the four alpha-diversity indices for both sites.
+```{r}
+pairs(data_alphadiv[,c(4,5,9,10)])
+```
+
+```{r}
+cor(data_alphadiv[,c(4,5,9,10)])
+```
+
+
+
+## 4. Statistical analyses
+
+You can use different statistical tests in order to test if there is any significant differences between treatments: parametric tests (t-test and ANOVA) or non-parametric tests (Mann-Whitney and Kruskal-Wallis). Before using parametric tests, you need to make sure that you can use them (e.g. normal distribution, homoscedasticity).
+We will use parametric tests for the following analysis.
+
+We will first test the effect of the sampling site on the Shannon index using one-factor ANOVA test.
+```{r}
+summary(aov(data_shannon ~ site, data = data_alphadiv))
+```
+We can interpret the results as following:
+ - There is no significant effect of the sampling site: Pr(>F) = 0.0821 (P-value > 0.05)
+
+
+```{r}
+summary(aov(data_shannon ~ site * month, data = data_alphadiv))
+```
+We can see now that:
+ - There is a significant effect of the sampling site: Pr(>F) = 1.12e-05 (P-value < 0.05)
+ - There is a significant effect of the sampling date: Pr(>F) = 8.12e-07 (P-value < 0.05)
+ - There is a significant effect of the interaction: Pr(>F) = 6.95e-07 (P-value < 0.05)
+
+
+
+
+
+# Session Info
+
+```{r ressionInfo}
+sessionInfo()
+```

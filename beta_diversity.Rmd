@@ -1,0 +1,113 @@
+---
+title: "Beta-Diversity"
+author: "Timothy Stephens"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    keep_md: yes
+---
+
+
+While alpha-diversity represents the diversity within an ecosystem or a sample, beta-diversity represents the difference between two ecosystems/samples. In other word, how similar or different are two ecosystems or samples? So, beta-diversity is a distance between two samples. Microbial ecologists do not use Euclidean distances but usually use Bray-Curtis, Jaccard or weight/unweight Unifrac distances to estimate the beta-diversity.
+
+The Bray-Curtis dissimilarity is based on occurrence data (abundance), while the Jaccard distance is based on presence/absence data (does not include abundance information). UniFrac distances take into account the occurrence table and the phylogeny diversity (sequence distance). Weighted or unweighted UniFrac distances depending if taking into account relative abundance or only presence/absence.
+Distances metrics are between 0 and 1: 0 means identical communities in both samples and 1 means different communities in both samples.
+
+Based heavily on tutorial: https://scienceparkstudygroup.github.io/microbiome-lesson/06-beta-diversity/index.html
+
+
+
+# Setup
+
+Setup R env. Load packages and set default image export formats, size and resolution.
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE,
+                      fig.height = 8, 
+                      fig.width = 12, 
+                      dev = c("png", "pdf"),
+                      dpi = 1000)
+library(vegan)
+library(phyloseq)
+library(tidyverse)
+library(patchwork)
+library(agricolae)
+library(FSA)
+library(rcompanion)
+library(ggplot2)
+library(patchwork)
+options(scipen = 999) #Prevent scientific notation
+```
+
+
+
+## 1. Definitions and important information
+
+```{r load_data}
+data_otu  <- read.table("data/data_loue_16S_nonnorm.txt", header = TRUE)
+data_grp  <- read.table("data/data_loue_16S_nonnorm_grp.txt", header=TRUE, stringsAsFactors = TRUE)
+data_taxo <- read.table("data/data_loue_16S_nonnorm_taxo.txt", header = TRUE)
+
+OTU = otu_table(as.matrix(data_otu), taxa_are_rows = FALSE)              
+SAM = sample_data(data_grp, errorIfNULL = TRUE)                
+TAX = tax_table(as.matrix(data_taxo)) 
+data_phylo <- phyloseq(OTU, TAX, SAM) 
+
+data_phylo_filt = filter_taxa(data_phylo, function(x) sum(x > 2) > (0.11 * length(x)), TRUE) 
+set.seed(1782) # set seed for analysis reproducibility
+OTU_filt_rar = rarefy_even_depth(otu_table(data_phylo_filt), rngseed = TRUE, replace = FALSE) # rarefy the raw data using Phyloseq package
+data_otu_filt_rar = data.frame(otu_table(OTU_filt_rar)) # create a separated file
+data_phylo_filt_rar <- phyloseq(OTU_filt_rar, TAX, SAM) # create a phyloseq object
+```
+Beta-diversity is calculated on filtered and normalized data tables: the `data_otu_filt_rar` data table or the phyloseq object `data_phylo_filt_rar`
+
+
+
+## 2. Distances calculation
+
+```{r calculate_richness_stats}
+# calculate Bray-Curtis distance using the vegan package
+dist_bc <- as.matrix(vegdist(data_otu_filt_rar, method = "bray")) 
+
+# a peek at the first five rows / columns
+dist_bc[1:5, 1:5]
+```
+
+
+## 3. Visualisation using PCOA ordination plot
+
+In order to represent in a two dimensional plot from the huge inter-sample distances matrix (pairwise distances), we are doing a principal coordinate analysis (PCoA). Principal Component Analysis (PCA) is a special case of PCoA for which Euclidean distances are calculated between samples. However, PCoA works with any dissimilarity measure (such as Bray-Curtis, Jaccard or weight/unweight Unifrac distances) and so specific association coefficients that better deal with the problem of the presence of many double zeros in data sets can be surmounted.
+However, PCoA does not provide a direct link between the components and the original variables and so the interpretation of variable contribution may be more difficult. This is because PCoA components, instead of being linear combinations of the original variables as in PCA, are complex functions of the original variables depending on the selected dissimilarity measure.
+
+PCoA based on Bray-Curtis distances for the two different sites:
+```{r}
+# calculate PCOA using Phyloseq package
+pcoa_bc = ordinate(data_phylo_filt_rar, "PCoA", "bray") 
+
+plot_ordination(data_phylo_filt_rar, pcoa_bc, color = "site") + 
+  geom_point(size = 3)
+```
+
+
+
+## 4. Statistical test
+
+To test whether the groups are different with respect to centroid and dispersion, a PERMANOVA statistical test will be performed. For this a multivariate extension of ANOVA will be used, as there are many OTU/taxa/species that will be used in the test. The extension is based on distances between samples. The test compares distances of samples within the same group to distances of samples from different groups. If the distance between samples from the different groups is much larger than samples from the same group, we conclude that the groups are not equal.
+In order to test the significance of the result, a permutation test is used. Thus all samples are randomly mixed over the groups and the test is repeated many times. If the ratio (between group distance / within group distance) is much larger for the original data than for the permutations, we conclude there is a statistical significant difference.
+The test can be applied in combination with any distance measure. Here we use the Bray-Curtis distance as was also used for the PCoA above.
+
+First, we will test if there is any significant effect of the sampling site.
+```{r}
+# Permanova test using the vegan package
+adonis2(data_otu_filt_rar~site,data=data_grp, permutations=9999, method="bray")
+```
+The Total Sum of Squares is obtained from summing up all squared distances and dividing this by the number of samples - 1. The Residuals sum of squares (or within group sum of squares) is obtained by adding all squared distances of samples in the same group and divide this by the number of samples per group. The site sum of squares (or between group sum of squares) = SSTotal - SSResiduals. The F.model value then is obtained by the ratio of the Mean Squares (which are the Sum of squares divided by their degrees of freedom). The fraction of permuted results that provide a higher F value than the original data Pr(>F) represents the p-value which is significant when < 0.05.
+
+
+
+
+
+# Session Info
+
+```{r ressionInfo}
+sessionInfo()
+```
